@@ -1,5 +1,5 @@
 #+AUTHOR: Рогов Я.С.
-#+TITLE: NONE
+#+TITLE: Homework 4
 #+LANGUAGE: ru
 #+LATEX_HEADER: \subject{Автоматическая обработка естественного языка}
 #+LATEX_HEADER: \labnum{4}
