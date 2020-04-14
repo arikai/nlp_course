@@ -1,0 +1,274 @@
+#+AUTHOR: Рогов Я.С.
+#+TITLE: NONE
+#+LANGUAGE: ru
+#+LATEX_HEADER: \subject{Автоматическая обработка естественного языка}
+#+LATEX_HEADER: \labnum{2}
+#+LATEX_HEADER: \variant{}
+#+LATEX_HEADER: \professor{Г. Д. Вольгенаннт}
+#+LATEX_HEADER: \groupname{P41182}
+#+TAGS: noexport
+
+#+STARTUP: showall hideblocks inlineimages indent
+#+STARTUP: latexpreview
+
+#+OPTIONS: ':t -:t ::t <:t \n:nil ^:t f:t |:t e:t
+#+OPTIONS: author:t broken-links:mark date:t title:t
+#+OPTIONS: tex:t toc:nil
+
+#+OPTIONS: H:3
+
+# Do not export TODO-related text, tags, properties,
+#+OPTIONS: todo:nil tags:nil prop:nil
+# drawers, inline tasks and statistics cookies ([0/3] in TODOs)
+#+OPTIONS: d:nil inline:nil stat:nil
+
+#+LATEX_COMPILER: xelatex
+#+LATEX_CLASS: itmo-report
+
+#+PROPERTY: header-args :session lab2 :cache yes :exports code :results output :wrap src text
+* Download Alice's Adventures in Wonderland
+#+name: alice_filename
+#+begin_src restclient :results value file :file data/alice.txt :wrap
+GET https://www.gutenberg.org/files/11/11-0.txt
+#+end_src
+
+#+RESULTS[44c44dbd533a2c0c6d5d5eae138ab006dd60f590]: alice_filename
+#+begin_results
+[[file:data/alice.txt]]
+#+end_results
+
+* Setup POS tagger
+#+begin_src python :python "python3" :results output :export code
+import nltk
+nltk.download('averaged_perceptron_tagger')
+#+end_src
+
+#+RESULTS[472d6f1834fdd93c836d1e7fa6c9776013ae4ac1]:
+#+begin_src text
+[nltk_data] Downloading package averaged_perceptron_tagger to
+[nltk_data]     /Users/administrator/nltk_data...
+[nltk_data]   Package averaged_perceptron_tagger is already up-to-
+[nltk_data]       date!
+#+end_src
+
+* Split text into paragraphs
+#+begin_src python :python "python3"
+import nltk
+from nltk.corpus.reader import PlaintextCorpusReader
+from functools import reduce
+
+def flatten(enum, level):
+    if level == 1:
+        return list(enum)
+    else:
+        l = []
+        for el in enum:
+            l.extend(flatten(el, level-1))
+        return l
+
+def sents_to_pars(sents, num):
+    return (flatten(sents[i:i+num], 2)
+            for i in range(0, len(sents), num))
+
+reader = PlaintextCorpusReader('.', 'data/alice.txt')
+tokenizer = reader._word_tokenizer
+pars = sents_to_pars(reader.sents(), 20)
+
+docs = list(map(lambda d: nltk.Text(d[1], name=str(d[0])), enumerate(pars)))
+#+end_src
+
+#+RESULTS[e7a7d7ad53fa33b5116e7ce57a1e36b9db44cfac]:
+#+begin_src text
+#+end_src
+
+
+* Positional Index
+#+begin_src python :python "python3"
+def build_pos_index(docs, transform = lambda x: x):
+    index = dict()
+
+    def add_entry(w, d, wi):
+        entry = index.get(w, (0, dict()))
+        index[w] = add_position(entry, d, wi)
+
+    def add_position(entry, d, wi):
+        freq, positions = entry
+        positions.setdefault(d, set()).add(wi)
+        return (freq + 1, positions)
+
+    for d in docs:
+        for wi, w in enumerate(d.tokens):
+            # TODO: Stopword?
+            add_entry(transform(w), d, wi)
+
+    return index
+
+index = build_pos_index(docs)
+#+end_src
+
+#+RESULTS[bdfb8e8b96295313be552eeadd43998c025ba201]:
+#+begin_src text
+#+end_src
+
+* Phrase search based on Positional Index
+#+begin_src python :python "python3"
+def search_index(phrase, index):
+    if type(phrase) == list:
+        words = phrase
+    else:
+        words = tokenizer.tokenize(phrase)
+
+    if len(words) == 0:
+        raise Exception("Phrase contains no words: {}".format(phrase))
+    phrase_len = len(words)
+    first_word = words[0]
+    rest_words = words[1:]
+    doc_start_indices = dict()
+
+    def get_positions(word):
+        if word in index:
+            return index[word][1]
+        else:
+            return dict()
+
+    def get_doc_positions(word, doc):
+        if word in index and doc in index[word][1]:
+            return index[word][1][doc]
+        else:
+            return dict()
+
+    # matching_docs = reduce(lambda ss, s: ss.intersection(s),
+    #                        map(lambda w: get_positions(w).keys(), words),
+    #                        set(docs))
+
+    for doc, positions in get_positions(first_word).items():
+        # if doc in matching_docs:
+        for pos in sorted(positions):
+            found = True
+            for inc, word in enumerate(rest_words, start=1):
+                if (pos + inc) not in get_doc_positions(word, doc):
+                    found = False
+                    break
+            if found:
+                doc_start_indices.setdefault(doc, []).append(pos)
+
+    return (doc_start_indices, phrase_len)
+
+def render_search_results(result, lookaround=5):
+    doc_start_indices, phrase_len = result
+    rendered_strings = dict()
+
+    def render_doc_results(doc):
+        return 'Paragraph {}\n{}'.format(
+            doc.name,
+            '\n\n'.join(map(lambda s: '\t{}'.format(s),
+                            rendered_strings[doc])))
+
+    for doc, indices in doc_start_indices.items():
+        for index in indices:
+            words = doc[index-lookaround : index+phrase_len+lookaround+1]
+            rendered_strings.setdefault(doc, []).append(' '.join(words))
+
+    # print(rendered_strings)
+    return \
+        'SEARCH RESULTS\n' + ('='* 80) + '\n\n' + \
+        '\n{}\n'.format('-' * 80).join(map(render_doc_results,
+                                           doc_start_indices.keys()))
+#+end_src
+
+#+RESULTS[ef94e8f8c2e8681cb69c3b9bf89263bb256456bd]:
+#+begin_src text
+#+end_src
+
+* Showcase
+#+begin_src python :python "python3"
+# Helper function
+def search_and_print(s, index, **kwargs):
+    print(render_search_results(search_index(s, index), **kwargs))
+#+end_src
+
+#+RESULTS[771fdca592aebaa6bc610fa971d4ef0707b4871b]:
+#+begin_src text
+#+end_src
+
+** Search for "oh dear"
+#+begin_src python :python "python3"
+search_and_print('oh dear', index)
+#+end_src
+
+#+RESULTS[5a33e440773ab5c02786bf1ac2bf75cfd8cc4f47]:
+#+begin_src text
+SEARCH RESULTS
+================================================================================
+
+Paragraph 6
+	m_ I , and — oh dear , how puzzling it all is
+
+	four times seven is — oh dear ! I shall never get to
+--------------------------------------------------------------------------------
+Paragraph 7
+	somebody else ’— but , oh dear !” cried Alice , with a
+--------------------------------------------------------------------------------
+Paragraph 9
+	all the rats and — oh dear !” cried Alice in a sorrowful
+#+end_src
+
+** Search for "poor child"
+#+begin_src python :python "python3"
+search_and_print('poor child', index)
+#+end_src
+
+#+RESULTS[68564a91574c77099096d654735c10703a24deb5]:
+#+begin_src text
+SEARCH RESULTS
+================================================================================
+
+Paragraph 7
+	than ever ,” thought the poor child , “ for I never was
+#+end_src
+
+** Search for "it was not easy to know"
+#+begin_src python :python "python3"
+search_and_print('it was not easy to know', index)
+#+end_src
+
+#+RESULTS[44dbac0049fb92969dc5bc16fbf6676dc7125b63]:
+#+begin_src text
+SEARCH RESULTS
+================================================================================
+
+Paragraph 11
+	they liked , so that it was not easy to know when the race was over .
+#+end_src
+
+
+* Bonus: POS tagging
+#+begin_src python :python "python3"
+pos_index = build_pos_index(docs, transform=lambda w: nltk.pos_tag(w)[0][1])
+#+end_src
+
+#+RESULTS[150bbdd3385195954bef8dae27964b074fa9501e]:
+#+begin_src text
+#+end_src
+
+#+begin_src python :python "python3"
+search_and_print(['PRP', 'VB', 'JJ', 'NN'], pos_index, lookaround=0)
+#+end_src
+
+#+RESULTS[3209db5e7f30ea45c023eb9249f77bfd6bdf95eb]:
+#+begin_src text
+SEARCH RESULTS
+================================================================================
+
+Paragraph 18
+	I eat one of these
+--------------------------------------------------------------------------------
+Paragraph 25
+	It was opened by another
+--------------------------------------------------------------------------------
+Paragraph 67
+	I had not gone (
+--------------------------------------------------------------------------------
+Paragraph 70
+	It may only be used
+#+end_src

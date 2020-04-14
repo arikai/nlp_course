@@ -1,0 +1,391 @@
+#+AUTHOR: Рогов Я.С.
+#+TITLE: NONE
+#+LANGUAGE: ru
+#+LATEX_HEADER: \subject{Автоматическая обработка естественного языка}
+#+LATEX_HEADER: \labnum{1}
+#+LATEX_HEADER: \variant{}
+#+LATEX_HEADER: \professor{Г. Д. Вольгенаннт}
+#+LATEX_HEADER: \groupname{P41182}
+#+TAGS: noexport
+
+#+STARTUP: showall hideblocks inlineimages indent
+#+STARTUP: latexpreview
+
+#+OPTIONS: ':t -:t ::t <:t \n:nil ^:t f:t |:t e:t
+#+OPTIONS: author:t broken-links:mark date:t title:t
+#+OPTIONS: tex:t toc:nil
+
+#+OPTIONS: H:3
+
+# Do not export TODO-related text, tags, properties,
+#+OPTIONS: todo:nil tags:nil prop:nil
+# drawers, inline tasks and statistics cookies ([0/3] in TODOs)
+#+OPTIONS: d:nil inline:nil stat:nil
+
+#+LATEX_COMPILER: xelatex
+#+LATEX_CLASS: itmo-report
+
+#+PROPERTY: header-args :session lab1 :cache yes :exports code :results output
+* Download "Alice's Adventures in Wonderland"
+#+name: alice_filename
+#+begin_src restclient :results value file :file data/alice.txt
+GET https://www.gutenberg.org/files/11/11-0.txt
+#+end_src
+
+#+RESULTS[cfe06bd67fe5e2bd3e4728576e90fce179f4701b]: alice_filename
+[[file:data/alice.txt]]
+* Setup nltk
+#+begin_src python :python "python3"
+import nltk
+
+deps = [
+    'gutenberg',
+    'stopwords',
+    'genesis',
+    'inaugural',
+    'nps_chat',
+    'webtext',
+    'treebank',
+    'punkt'
+]
+
+list(map(nltk.download, deps))
+#+end_src
+
+#+RESULTS[dff7f6f957db43f7d73ba36075714faf0deb6c77]:
+#+begin_example
+[nltk_data] Downloading package gutenberg to
+[nltk_data]     /Users/administrator/nltk_data...
+[nltk_data]   Package gutenberg is already up-to-date!
+[nltk_data] Downloading package stopwords to
+[nltk_data]     /Users/administrator/nltk_data...
+[nltk_data]   Package stopwords is already up-to-date!
+[nltk_data] Downloading package genesis to
+[nltk_data]     /Users/administrator/nltk_data...
+[nltk_data]   Package genesis is already up-to-date!
+[nltk_data] Downloading package inaugural to
+[nltk_data]     /Users/administrator/nltk_data...
+[nltk_data]   Package inaugural is already up-to-date!
+[nltk_data] Downloading package nps_chat to
+[nltk_data]     /Users/administrator/nltk_data...
+[nltk_data]   Package nps_chat is already up-to-date!
+[nltk_data] Downloading package webtext to
+[nltk_data]     /Users/administrator/nltk_data...
+[nltk_data]   Package webtext is already up-to-date!
+[nltk_data] Downloading package treebank to
+[nltk_data]     /Users/administrator/nltk_data...
+[nltk_data]   Package treebank is already up-to-date!
+[nltk_data] Downloading package punkt to
+[nltk_data]     /Users/administrator/nltk_data...
+[nltk_data]   Package punkt is already up-to-date!
+#+end_example
+
+* Convert raw file to nltk.Text
+#+begin_src python :python "python3" :var alice_filename=alice_filename
+import nltk
+import string
+from nltk.book import text1 as moby_pre
+from nltk.corpus.reader.plaintext import PlaintextCorpusReader
+import re
+
+stopwords = nltk.corpus.stopwords.words('english') \
+    + ['gutenberg', 'project', 'tm']
+
+stopwords_re = re.compile('[' + "‘’'“”—" + string.punctuation + ']')
+
+def is_stopword(w):
+    return stopwords_re.match(w) or (w in stopwords)
+
+def filter_words(words):
+    return (w for w in map(str.lower, words) if not is_stopword(w))
+
+alice = nltk.Text(filter_words(PlaintextCorpusReader('.', alice_filename).words()),
+                  name="Alice's Adventures in Wonderland by Lewis Carroll 1865")
+
+moby = nltk.Text(filter_words(moby_pre), name=moby_pre.name)
+#+end_src
+
+#+RESULTS[55ca01c523f73bc8531403840b08f8385d7b1f1f]:
+: Traceback (most recent call last):
+:   File "<stdin>", line 1, in <module>
+:   File "/var/folders/9q/_2_crsk544v332j9hfd1251w0000gp/T/babel-l9qd4O/python-xMLhM7", line 19, in <module>
+:     alice = nltk.Text(filter_words(PlaintextCorpusReader('.', alice_filename).words()),
+:   File "/usr/local/lib/python3.7/site-packages/nltk/corpus/reader/plaintext.py", line 93, in words
+:     for (path, enc, fileid) in self.abspaths(fileids, True, True)
+:   File "/usr/local/lib/python3.7/site-packages/nltk/corpus/reader/util.py", line 443, in concat
+:     raise ValueError('concat() expects at least one object!')
+: ValueError: concat() expects at least one object!
+
+
+* Build Frequency distribution
+#+begin_src python :python "python3"
+from nltk import FreqDist
+
+def fd_top_50(fd):
+    return FreqDist(dict(sorted(fd.items(), key=lambda x: x[1], reverse=True)[:50]))
+
+def fd_tabularize(fd):
+    return list(fd.items())
+
+moby_fd = fd_top_50(FreqDist(moby))
+alice_fd = fd_top_50(FreqDist(alice))
+#+end_src
+
+#+RESULTS[5e7821c4ab60e1af8709ad5f48bf3b5527902e6f]:
+
+* Alice Results
+#+begin_src python :python "python3" :results value table
+fd_tabularize(alice_fd)
+#+end_src
+
+#+RESULTS:
+| said     | 460 |
+| alice    | 403 |
+| little   | 127 |
+| one      | 103 |
+| know     |  88 |
+| like     |  85 |
+| went     |  83 |
+| would    |  78 |
+| queen    |  76 |
+| could    |  75 |
+| thought  |  74 |
+| time     |  71 |
+| see      |  70 |
+| well     |  63 |
+| king     |  63 |
+| turtle   |  59 |
+| way      |  58 |
+| mock     |  57 |
+| began    |  57 |
+| hatter   |  56 |
+| gryphon  |  55 |
+| rabbit   |  53 |
+| quite    |  53 |
+| work     |  53 |
+| much     |  52 |
+| 1        |  51 |
+| say      |  51 |
+| first    |  51 |
+| must     |  51 |
+| head     |  50 |
+| go       |  50 |
+| think    |  49 |
+| thing    |  49 |
+| voice    |  48 |
+| come     |  47 |
+| get      |  46 |
+| never    |  46 |
+| oh       |  45 |
+| looked   |  45 |
+| got      |  45 |
+| mouse    |  44 |
+| duchess  |  42 |
+| round    |  41 |
+| came     |  40 |
+| tone     |  40 |
+| dormouse |  40 |
+| great    |  39 |
+| back     |  39 |
+| two      |  38 |
+| cat      |  37 |
+
+* Results for Moby Dick
+#+begin_src python :python "python3" :results value table
+fd_tabularize(moby_fd)
+#+end_src
+
+#+RESULTS:
+| whale    | 1226 |
+| one      |  921 |
+| like     |  647 |
+| upon     |  566 |
+| man      |  527 |
+| ship     |  518 |
+| ahab     |  511 |
+| ye       |  472 |
+| sea      |  455 |
+| old      |  450 |
+| would    |  432 |
+| though   |  384 |
+| head     |  345 |
+| yet      |  345 |
+| boat     |  336 |
+| time     |  334 |
+| long     |  333 |
+| captain  |  329 |
+| still    |  312 |
+| great    |  306 |
+| said     |  304 |
+| two      |  298 |
+| must     |  283 |
+| seemed   |  283 |
+| white    |  281 |
+| last     |  277 |
+| see      |  272 |
+| thou     |  271 |
+| way      |  271 |
+| whales   |  268 |
+| stubb    |  257 |
+| queequeg |  252 |
+| little   |  249 |
+| round    |  247 |
+| three    |  245 |
+| say      |  244 |
+| men      |  244 |
+| sperm    |  244 |
+| may      |  240 |
+| first    |  235 |
+| every    |  232 |
+| well     |  230 |
+| us       |  228 |
+| much     |  223 |
+| could    |  216 |
+| good     |  216 |
+| hand     |  214 |
+| side     |  208 |
+| ever     |  206 |
+| never    |  206 |
+* Difference
+#+begin_src python :python "python3"
+diff_fd = alice_fd.copy()
+diff_fd.subtract(moby_fd)
+#+end_src
+
+#+begin_src python :python "python3" :results value table
+fd_tabularize(diff_fd)
+#+end_src
+
+#+RESULTS:
+| said     |   156 |
+| alice    |   403 |
+| little   |  -122 |
+| one      |  -818 |
+| know     |    88 |
+| like     |  -562 |
+| went     |    83 |
+| would    |  -354 |
+| queen    |    76 |
+| could    |  -141 |
+| thought  |    74 |
+| time     |  -263 |
+| see      |  -202 |
+| well     |  -167 |
+| king     |    63 |
+| turtle   |    59 |
+| way      |  -213 |
+| mock     |    57 |
+| began    |    57 |
+| hatter   |    56 |
+| gryphon  |    55 |
+| rabbit   |    53 |
+| quite    |    53 |
+| work     |    53 |
+| much     |  -171 |
+| 1        |    51 |
+| say      |  -193 |
+| first    |  -184 |
+| must     |  -232 |
+| head     |  -295 |
+| go       |    50 |
+| think    |    49 |
+| thing    |    49 |
+| voice    |    48 |
+| come     |    47 |
+| get      |    46 |
+| never    |  -160 |
+| oh       |    45 |
+| looked   |    45 |
+| got      |    45 |
+| mouse    |    44 |
+| duchess  |    42 |
+| round    |  -206 |
+| came     |    40 |
+| tone     |    40 |
+| dormouse |    40 |
+| great    |  -267 |
+| back     |    39 |
+| two      |  -260 |
+| cat      |    37 |
+| whale    | -1226 |
+| upon     |  -566 |
+| man      |  -527 |
+| ship     |  -518 |
+| ahab     |  -511 |
+| ye       |  -472 |
+| sea      |  -455 |
+| old      |  -450 |
+| though   |  -384 |
+| yet      |  -345 |
+| boat     |  -336 |
+| long     |  -333 |
+| captain  |  -329 |
+| still    |  -312 |
+| seemed   |  -283 |
+| white    |  -281 |
+| last     |  -277 |
+| thou     |  -271 |
+| whales   |  -268 |
+| stubb    |  -257 |
+| queequeg |  -252 |
+| three    |  -245 |
+| men      |  -244 |
+| sperm    |  -244 |
+| may      |  -240 |
+| every    |  -232 |
+| us       |  -228 |
+| good     |  -216 |
+| hand     |  -214 |
+| side     |  -208 |
+| ever     |  -206 |
+|          |       |
+* Plot for all data
+#+begin_src python :python "python3" :results value file :exports both
+import matplotlib.pyplot as plt
+from functools import reduce
+
+def build_fd_plot_data(fds):
+    uniq_labels = reduce(lambda s, fd: s.union(fd.keys()), fds, set())
+    rows = map(lambda l: (l, *map(lambda x: x.get(l, 0), fds)), uniq_labels)
+    return zip(*rows)
+
+def fd_save_plot(fds, titles, name, *args, **kwargs):
+    if type(fds) != list:
+        fds = [fds]
+    if type(titles) != list:
+        titles = [titles]
+
+    ax = plt.gca()
+    ax.grid(True, color="silver")
+
+    if "linewidth" not in kwargs:
+        kwargs["linewidth"] = 2
+    if "title" in kwargs:
+        ax.set_title(kwargs["title"])
+        del kwargs["title"]
+
+    colors = ['r', 'b', 'g']
+    labels, *data = build_fd_plot_data(fds)
+
+    ax.set_ylabel('Counts')
+
+    ax.set_xlabel('Words')
+    ax.set_xticks(range(len(labels)))
+    ax.set_xticklabels(labels, rotation=90)
+
+    for i in range(len(fds)):
+        ax.plot(data[i], colors[i] + '-', label=titles[i])
+
+    ax.figure.set_size_inches(30, 10)
+    plt.savefig(name)
+    ax.clear()
+
+    return name
+
+filename = 'figure/plot.png'
+fd_save_plot([alice_fd, moby_fd, diff_fd], ['alice', 'moby', 'diff'], filename)
+filename
+#+end_src
+
+#+RESULTS[af9b171e1d851f335529334ccd6b8de1af2a6d08]:
+[[file:figure/plot.png]]

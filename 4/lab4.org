@@ -1,0 +1,405 @@
+#+AUTHOR: Рогов Я.С.
+#+TITLE: NONE
+#+LANGUAGE: ru
+#+LATEX_HEADER: \subject{Автоматическая обработка естественного языка}
+#+LATEX_HEADER: \labnum{4}
+#+LATEX_HEADER: \variant{}
+#+LATEX_HEADER: \professor{Г. Д. Вольгенаннт}
+#+LATEX_HEADER: \groupname{P41182}
+#+TAGS: noexport
+
+#+STARTUP: showall hideblocks inlineimages indent
+#+STARTUP: latexpreview
+
+#+OPTIONS: ':t -:t ::t <:t \n:nil ^:t f:t |:t e:t
+#+OPTIONS: author:t broken-links:mark date:t title:t
+#+OPTIONS: tex:t toc:nil
+
+#+OPTIONS: H:3
+
+# Do not export TODO-related text, tags, properties,
+#+OPTIONS: todo:nil tags:nil prop:nil
+# drawers, inline tasks and statistics cookies ([0/3] in TODOs)
+#+OPTIONS: d:nil inline:nil stat:nil
+
+#+LATEX_COMPILER: xelatex
+#+LATEX_CLASS: itmo-report
+
+#+PROPERTY: header-args :python "python3" :session lab4 :cache yes :exports code :results output :wrap example
+* Setup SpaCy
+#+begin_src sh :results value :output code
+pip3 install spacy
+python3 -m spacy download en_core_web_sm
+#+end_src
+* Part 1: Information Extraction
+Used relation: programming language - creator
+** Documents
+Documents containing stated relation are extracted from the corresponding articles on Wikipedia.
+#+begin_src python :python "python3" :export code
+docs = [
+    """
+    John McCarthy developed Lisp in 1958 while he was at the Massachusetts Institute of Technology (MIT). McCarthy published its design in a paper in Communications of the ACM in 1960, entitled "Recursive Functions of Symbolic Expressions and Their Computation by Machine, Part I". He showed that with a few simple operators and a notation for anonymous functions borrowed from Church, one can build a Turing-complete language for algorithms.
+    """,
+    """
+    Rust was originally designed by Graydon Hoare at Mozilla Research, with contributions from Dave Herman, Brendan Eich, and others.[18][19] The designers refined the language while writing the Servo layout or browser engine,[20] and the Rust compiler. The compiler is free and open-source software dual-licensed under the MIT License and Apache License 2.0.
+    """,
+    """
+    José Valim is the Brazilian creator of the Elixir programming language, a research and development project of Plataformatec. His goals were to enable higher extensibility and productivity in the Erlang VM while keeping compatibility with Erlang's ecosystem.
+    """
+]
+#+end_src
+
+#+RESULTS[ca3816329b8dafae6015b5a41747dad6ddf86c76]:
+#+begin_example
+#+end_example
+
+** Example of a found pattern for Lisp (P developed L)                 :ATTACH:
+:PROPERTIES:
+:ID:       BCCB86B0-DE60-4486-9C76-8727FE34CACB
+:END:
+
+#+DOWNLOADED: screenshot @ 2020-04-14 13:11:52
+[[attachment:2020-04-14_13-11-52_screenshot.png]]
+** Patterns
+#+begin_src python :python "python3"
+languages = ['elixir', 'lisp', 'rust']
+person_pat = {'POS': 'PROPN',
+              'DEP': {'IN': ['nsubj', 'pobj']},
+              # 'ENT_TYPE': 'PERSON' # Can't really use it: Jose Valim is not recognized
+}
+lang_pat = {'POS': {'IN': ['PROPN', 'NOUN']},
+            'DEP': {'IN': ['dobj', 'nsubjpass', 'pobj', 'compound']},
+            'LOWER': {'IN': languages},
+
+}
+
+patterns = [
+    # Lisp example
+    [
+        person_pat,
+        {'POS': 'ADV', 'OP': '?'}, # ~originally
+        {'POS': 'VERB'},           # developed
+        lang_pat
+    ],
+    # # Rust example
+    [
+        lang_pat,
+        {'DEP': 'auxpass'},        # was
+        {'POS': 'ADV', 'OP': '?'}, # ~originally
+        {'POS': 'VERB'},           # developed
+        {'POS': 'ADP'},            # by
+        person_pat
+    ],
+
+    # Elixir example
+    [
+        person_pat,
+        {'POS': 'AUX'},            # is
+        {'OP': "*"},               # smth smth
+        {'POS': 'NOUN'},           # creator
+        {'DEP': 'prep'},           # of
+        {'POS': 'DET', 'OP': '?'},
+        lang_pat
+    ]
+]
+#+end_src
+** Implementation and Tests
+#+begin_src python :python "python3"
+import spacy
+from spacy.matcher import Matcher
+
+nlp = spacy.load('en_core_web_sm')
+
+# Merge entities: "Barry", "Allen" -> "Barry Allen"
+nlp.add_pipe(nlp.create_pipe("merge_entities"))
+
+# doc = nlp('\n'.join(docs))
+def find_pl(doc):
+  matcher = Matcher(nlp.vocab)
+  matcher.add('ProgLangCreator', patterns)
+
+  def print_match(lang, person, span):
+      print("""{}: {}. Source: {}""".format(lang, person, span))
+
+  for (_, a, b) in matcher(doc):
+    if doc[a].text.lower() in languages:
+        print_match(doc[a], doc[b-1], doc[a:b].text)
+    elif doc[a].text.lower() == 'valim':
+        print_match(doc[b-1], doc[a-1:a+1], doc[a:b].text)
+    else:
+        print_match(doc[b-1], doc[a], doc[a:b].text)
+
+  return doc
+
+nlp.add_pipe(find_pl, 'find_pl', last=True)
+
+list(map(nlp, docs))
+#+end_src
+
+#+RESULTS[853771e608c37c52000287d66e393519fcb4834b]:
+#+begin_example
+Lisp: John McCarthy. Source: John McCarthy developed Lisp
+Rust: Graydon Hoare. Source: Rust was originally designed by Graydon Hoare
+Elixir: José Valim. Source: Valim is the Brazilian creator of the Elixir
+#+end_example
+** Quality Evaluation
+Although it would be better to use commonly used metrics such as precision, recall or F1 and others, given that our dataset is rather small, it would be sufficient to evaluate models results informally.
+
+The only problem for this model with given dataset is that the name of the creator of Elixir language is not recognized by this model. Supposedly it is because of the small size of original dataset that the original model (~en_core_web_sm~) was trained on.
+* Part 2: Document clustering
+#+begin_src python :python "python3"
+import nltk
+from sklearn.cluster import OPTICS
+
+def pipe_remove(model, name):
+    if name in model.pipe_names:
+        model.remove_pipe(name)
+
+with open('../common/alice.txt') as f:
+    sents = nltk.sent_tokenize(f.read())
+
+pipe_remove(nlp, 'find_pl')
+pipe_remove(nlp, 'merge_entities')
+X = np.vstack(list(map(lambda s: nlp(s).vector, sents)))
+
+# model = OPTICS(min_samples=10)
+# model.fit(X)
+# print(model.ordering_)
+#+end_src
+
+#+RESULTS[38d7254e2a9888c2f79023b525f32c7338514a63]:
+#+begin_example
+[  0  22 156 219  89   4  38  17  81 139  49  99 223 316 554 795 534 621
+ 167 359 313 399 491 536 699 783 786 288 273 512 247 327 903 914 764 407
+ 673 861 571 802 968 833  21 942 635 967 275 211 261 716 722 735 790 695
+ 868 855 283 617  56 129 285 431 459 906 826 118 581 614 838 751 591 479
+ 369 937  47 612 420 137 302 555 619 627 184 930 950  34 144 408 573 890
+  52 100 485   1 229 286 342 551 728 421 231 411 452 801 705 461 345 183
+ 540 882 859 108 622  60 270 711 676 295 563 902 905 143 354 378 113 680
+ 757 400 440  72 217 900 924 134 966 121 107 707 803 198 658  44 784 305
+ 574 971 829 588 524 844 241 303 828  58 419 383 375 643 350 230 684 446
+ 181 503  78 605 634 153 797 642 257 465 299 970 879  37 926 367 856 190
+ 274 737 170 226 840 422 806 405 279 398 163 624 248 379 366 789 245 487
+ 532 458 325 584 860 340 237 744 282 666  59 825 330 334 689 401 920  42
+ 360 904 567 161  55 332 887 834 122 204 276 958 549 955 456 583 649 348
+ 499 678 878 105   7 287 467 912 301  63 646 615  43 925 271 638 464  75
+ 865   9 788 227 397 969 767 804 333 725 645 428 616 278 392  53 468 294
+ 319  40 550 515 362 127   8 157 637 322 541 849 225 165 582 537 654 703
+ 494 663 104 562 133 697 651 361 120 632 214 393 336 665 484 192 823 915
+ 314 842 372 565  50 525 674 335 162 631 528  76 293 636 387 477 546 679
+ 179 657 158 180 441 858 142 306 246 511 808 718 517 876 566 166 426 672
+ 544  46 579  77 212 193 827 164 424 727 381 382 519 956 416 189 556 664
+ 112 199 572 169 821  48 837 130 659 436 423 433 126 402  39 945 506   2
+  67 349 944  36 206 613 281 775 450 774 380 578 739 740 331 178 177 931
+ 373 224 521 470 951 731 943 927 280 729  90 647 884 557 781 496 586 429
+ 724 498 796 780 765 390 235 547 822 690 430 698 589   6 883 300 510 653
+ 871 854  32 371 147 702 434 370 897 415 607 197 704 701 160 318 640 625
+ 500 953 418 188  54 899 736 913 516 443 593 292 396  82 535 620 109 115
+ 146 682 681 310 561 726 346 277 341 394 201 493 145 110 580 448 194 265
+ 845  74 648 203 598 136  33 667 628  12 504 961 191 671 923 857 476 174
+ 186 329 660 148 762 941 539 688 384 296  69 356 965 577 255 220 639 717
+ 351 592 766 389  27 404  10 938 377 125  25 869 852 509 700 669 403 650
+ 347 152 934 768 623 123 734 793  68   5 374 427 518 221 244 388 264 853
+ 114 151 954 712 488 901 326 733 870 600 656 185 442 497 715 232 168 630
+ 569 473 439 738 323 782 124 799 805 898 776 172 233 946 548 872 489 182
+ 312  31 800  57 602 454 670 940  64 794 505 102 239 222 284 963 385 304
+ 478 195 523 576 608 709 483 542 675 355 752 743 723 315 480 200 481 732
+ 267 662 475 437  65 746 687 686 691 742 719 891 530 262 874 490 936 445
+ 596  24 254 119 911  41 417 585 610 641 266 252 187 308 435 850 568 851
+ 778 741 391 386 466 877 560 706 268 463 748  15 730  20 587 358 594 916
+ 835 471 603 862 438 785 761  16 472 344 128 863 875  88 365 917 798 116
+ 745 526 750 176 251 846 575 324 685 873 140 406 604 683 103 655 597 881
+ 677 545 629  97  19 626 661 921 962 949 601 832 538 457 309  92 474 522
+ 668  26 453 948 210 455 907 960 779 258  61 520 338 449 606  28 939 888
+ 791  86 328 694 259 451 770 501 376 867 928 892 773 154 196 307  11 814
+ 236 447 885 337 321 460 353 919 552  87 918 570 933 595 409 175 693 311
+ 297 529 708 839 132  45 106 590 131 238  96 692 138 817 395 173 213 847
+  51 339 469 889 792 507 135 886 558 830 843 363 290 492 111  71 171 922
+ 269 866 652 721 149 263  85 747 880 932 609 260 909 749 352 543 611 754
+ 228 929 240 618 243 816  93 482  95 959 864  66 910 117 753 908 320 215
+ 713 317 760 486 599 216 234 432 159  30 836 947 514 343 533 772 249 633
+ 831 848  14  70 769 531 559 935 218 841 810 811 513 508 972 952 809 444
+ 291  98 527  83 812 813 819 820  84 150 101 298 771  91  79  23 414 815
+ 957 894 209 787  94 696 710  18 807 207 818 893 256 756 242 425 364 155
+ 755 763  29 202 777 208 253 495 553 896 964 758   3 289 759 502 272 412
+ 824 714 895 141  13  62 357 462 644  80 410 413 205  73 368 564 720  35
+ 250]
+#+end_example
+** Model train
+#+begin_src python :python "python3" :export code
+import numpy as np
+import pandas as pd
+from sklearn.cluster import KMeans
+
+cluster_num = 10
+model = KMeans(n_clusters=cluster_num).fit(X)
+#+end_src
+
+#+RESULTS[25db25a355b60d16b4be1ea7b25186d14f784e84]:
+#+begin_example
+#+end_example
+
+** Results
+#+begin_src python :python "python3"
+samples = 5
+
+clusters = pd.DataFrame(enumerate(a)).groupby(1).groups
+for i in range(0, cluster_num):
+    sent_indices = np.random.permutation(clusters[i])[:samples]
+    print('Cluster {}'.format(i+1))
+    list(map(lambda x: print(" == {}".format(sents[x])), sent_indices))
+    print()
+#+end_src
+
+#+RESULTS[52abeaa2eb80beb8a84d201efee403ac2ba042d3]:
+#+begin_example
+Cluster 1
+ == “Of course twinkling begins with a T!” said the King sharply.
+ == Go on!”
+
+“I’m a poor man,” the Hatter went on, “and most things twinkled after
+that—only the March Hare said—”
+
+“I didn’t!” the March Hare interrupted in a great hurry.
+ == “It’s—it’s a very fine day!” said a timid voice at her side.
+ == “Why, what are _your_ shoes done with?” said the Gryphon.
+ == Always lay the
+blame on others!”
+
+“_You’d_ better not talk!” said Five.
+
+Cluster 2
+ == “How queer it seems,” Alice said to herself, “to be going messages for
+a rabbit!
+ == I needn’t be afraid of them!”
+
+“And who are _these?_” said the Queen, pointing to the three gardeners
+who were lying round the rose-tree; for, you see, as they were lying on
+their faces, and the pattern on their backs was the same as the rest of
+the pack, she could not tell whether they were gardeners, or soldiers,
+or courtiers, or three of her own children.
+ == Alice replied eagerly, for she was always ready to talk about her pet:
+“Dinah’s our cat.
+ == “I’m getting tired of this.
+ == He says
+it kills all the rats and—oh dear!” cried Alice in a sorrowful tone,
+“I’m afraid I’ve offended it again!” For the Mouse was swimming away
+from her as hard as it could go, and making quite a commotion in the
+pool as it went.
+
+Cluster 3
+ == The other guests had taken advantage of the Queen’s absence, and were
+resting in the shade: however, the moment they saw her, they hurried
+back to the game, the Queen merely remarking that a moment’s delay
+would cost them their lives.
+ == Who cares for fish,
+Game, or any other dish?
+ == She went in without
+knocking, and hurried upstairs, in great fear lest she should meet the
+real Mary Ann, and be turned out of the house before she had found the
+fan and gloves.
+ == An invitation for the Duchess to play croquet.”
+
+Then they both bowed low, and their curls got entangled together.
+ == Where _can_ I have dropped them, I wonder?” Alice guessed in a
+moment that it was looking for the fan and the pair of white kid
+gloves, and she very good-naturedly began hunting about for them, but
+they were nowhere to be seen—everything seemed to have changed since
+her swim in the pool, and the great hall, with the glass table and the
+little door, had vanished completely.
+
+Cluster 4
+ == Oh, my dear Dinah!
+ == “What!
+ == “Wow!
+ == Oh dear!
+ == “Well!
+
+Cluster 5
+ == “I mean what I say,” the Mock Turtle replied in an offended tone.
+ == “I don’t much care where—” said Alice.
+ == “How should _I_ know?” said Alice, surprised at her own courage.
+ == Therefore I’m mad.”
+
+“_I_ call it purring, not growling,” said Alice.
+ == How I wonder what you’re at!’
+
+
+You know the song, perhaps?”
+
+“I’ve heard something like it,” said Alice.
+
+Cluster 6
+ == That _will_ be a queer thing, to be
+sure!
+ == “How
+surprised he’ll be when he finds out who I am!
+ == I almost think I can remember feeling
+a little different.
+ == How funny it’ll seem to come out among the people that walk
+with their heads downward!
+ == “I’m glad they don’t give
+birthday presents like that!” But she did not venture to say it out
+loud.
+
+Cluster 7
+ == The Cat only grinned when it saw Alice.
+ == “Mary Ann!
+ == “No,” said the Caterpillar.
+ == Beau—ootiful Soo—oop!
+ == The Duchess!
+
+Cluster 8
+ == she knows such a
+very little!
+ == Alice took up the fan and gloves, and, as the hall was very hot, she
+kept fanning herself all the time she went on talking: “Dear, dear!
+ == “There’s certainly too much pepper in that soup!” Alice said to
+herself, as well as she could for sneezing.
+ == The Duchess took no notice of
+them even when they hit her; and the baby was howling so much already,
+that it was quite impossible to say whether the blows hurt it or not.
+ == I wonder if I’ve been changed in the night?
+
+Cluster 9
+ == Pat!
+ == CHAPTER VI.
+ == CHAPTER VIII.
+ == CHAPTER IV.
+ == CHAPTER IX.
+
+Cluster 10
+ == “You’re enough to try the patience of an oyster!”
+
+“I wish I had our Dinah here, I know I do!” said Alice aloud,
+addressing nobody in particular.
+ == It’s always six o’clock now.”
+
+A bright idea came into Alice’s head.
+ == “I wonder how
+many miles I’ve fallen by this time?” she said aloud.
+ == “I’ve had nothing yet,” Alice replied in an offended tone, “so I can’t
+take more.”
+
+“You mean you can’t take _less_,” said the Hatter: “it’s very easy to
+take _more_ than nothing.”
+
+“Nobody asked _your_ opinion,” said Alice.
+ == “Why,” said the Dodo, “the best way to explain it is to do it.” (And,
+as you might like to try the thing yourself, some winter day, I will
+tell you how the Dodo managed it.)
+#+end_example
+
+** Results Evaluation
+Although it might be hard to label clusters by its meaning, if it still were to be made up, even out of thin air, assumption would be the following.
+
+1. Sharp remark on one's behaviour
+2. Speech?
+3. Description of one's actions and observations
+4. Single-word exclamation
+5. General exclamation with emotions
+6. Speech directed to a particular person?
+7. Short sentences containing description of sort
+8. Alice's actions and observations
+9. Book formatting
+10. Sentences with pronouns

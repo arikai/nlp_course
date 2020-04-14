@@ -1,0 +1,311 @@
+#+AUTHOR: Рогов Я.С.
+#+TITLE: NONE
+#+LANGUAGE: ru
+#+LATEX_HEADER: \subject{Автоматическая обработка естественного языка}
+#+LATEX_HEADER: \labnum{3}
+#+LATEX_HEADER: \variant{}
+#+LATEX_HEADER: \professor{Г. Д. Вольгенаннт}
+#+LATEX_HEADER: \groupname{P41182}
+#+TAGS: noexport
+
+#+STARTUP: showall hideblocks inlineimages indent
+#+STARTUP: latexpreview
+
+#+OPTIONS: ':t -:t ::t <:t \n:nil ^:t f:t |:t e:t
+#+OPTIONS: author:t broken-links:mark date:t title:t
+#+OPTIONS: tex:t toc:nil
+
+#+OPTIONS: H:3
+
+# Do not export TODO-related text, tags, properties,
+#+OPTIONS: todo:nil tags:nil prop:nil
+# drawers, inline tasks and statistics cookies ([0/3] in TODOs)
+#+OPTIONS: d:nil inline:nil stat:nil
+
+#+LATEX_COMPILER: xelatex
+#+LATEX_CLASS: itmo-report
+
+#+PROPERTY: header-args :python "python3" :session lab3 :cache yes :exports code :results output :wrap example
+* Train the model
+#+BEGIN_SRC python
+import nltk
+from gensim.models import Word2Vec
+from nltk.corpus.reader.plaintext import PlaintextCorpusReader
+
+import string
+import re
+
+def is_stopword(w):
+    return stopwords_re.match(w) or (w in stopwords)
+
+stopwords = nltk.corpus.stopwords.words('english') \
+    + ['gutenberg', 'project', 'tm']
+
+stopwords_re = re.compile('[' + "‘’'“”—" + string.punctuation + ']')
+
+def filter_words(words):
+    return (w for w in map(str.lower, words) if not is_stopword(w))
+
+def filter_sents(sents):
+    return (l for l in
+            (list(filter_words(sent)) for sent in sents)
+            if len(l) > 0)
+
+reader = PlaintextCorpusReader('..', 'common/alice.txt')
+tokenizer = reader._word_tokenizer
+filtered_sents = list(filter_sents(reader.sents()))
+common_opts = {'workers': 8, 'min_count': 1}
+model5 = Word2Vec(filtered_sents, window=5, **common_opts)
+model30 = Word2Vec(filtered_sents, window=30, **common_opts)
+
+model5_file = '/tmp/window5.w2v'
+model30_file = '/tmp/window30.w2v'
+
+model5.wv.save_word2vec_format(model5_file)
+model30.wv.save_word2vec_format(model30_file)
+#+END_SRC
+
+#+RESULTS[3b40ce9e9ce5e1fc3f07ec39a483bb003a68e198]:
+#+begin_example
+Python 3.7.6 (default, Dec 30 2019, 19:38:28)
+[Clang 11.0.0 (clang-1100.0.33.16)] on darwin
+Type "help", "copyright", "credits" or "license" for more information.
+>>> python.el: native completion setup loaded
+#+end_example
+
+* Example "similar" searchers
+** Alice
+#+BEGIN_SRC python
+model5.wv.most_similar('alice')
+#+END_SRC
+
+#+RESULTS[737bd54fab27c16b185cb46e80d70123aac5295d]:
+#+begin_example
+[('said', 0.9823111295700073), ('little', 0.9739763736724854), ('could', 0.971441388130188), ('like', 0.9704852104187012), ('one', 0.9688825607299805), ('began', 0.9687654972076416), ('thought', 0.9670815467834473), ('went', 0.9667959213256836), ('two', 0.966594934463501), ('looked', 0.9664812088012695)]
+#+end_example
+
+** Queen
+#+BEGIN_SRC python
+model5.wv.most_similar('queen')
+#+END_SRC
+
+#+RESULTS[0586ac7bc916871ca80d36b4ea4f6ae65a86e841]:
+#+begin_example
+[('said', 0.9610768556594849), ('alice', 0.9576945900917053), ('little', 0.9532886147499084), ('time', 0.9516558051109314), ('two', 0.9492299556732178), ('quite', 0.9491113424301147), ('could', 0.9483827352523804), ('first', 0.9481155872344971), ('would', 0.9463645219802856), ('gryphon', 0.9462844133377075)]
+#+end_example
+
+* Visualize results
+** Plot code
+#+BEGIN_SRC python
+import sys
+import codecs
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.manifold import TSNE
+
+def load_embeddings(file_name):
+    with codecs.open(file_name, 'r', 'utf-8') as f_in:
+        vocabulary, wv = zip(*[line.strip().split(' ', 1) for n, line in enumerate(f_in) if n > 1])
+        wv = np.loadtxt(wv)
+    return wv, vocabulary
+
+def plot_embeddings(embeddings_file, plot_file):
+    wv, vocabulary = load_embeddings(embeddings_file)
+    tsne = TSNE(n_components=2, random_state=0)
+    np.set_printoptions(suppress=True)
+    Y = tsne.fit_transform(wv[:1000,:])
+    plt.scatter(Y[:, 0], Y[:, 1])
+    for label, x, y in zip(vocabulary, Y[:, 0], Y[:, 1]):
+        plt.annotate(label, xy=(x, y), xytext=(0, 0), textcoords='offset points')
+
+    plt.gcf().set_size_inches(20, 10)
+    plt.savefig(plot_file)
+    return plot_file
+#+END_SRC
+
+#+RESULTS[e8e79da1feb34df3621dc6a4e3eb6702a98a7858]:
+#+begin_example
+#+end_example
+
+** Window=5
+#+begin_src python :python "python3" :results output file :wrap
+print(plot_embeddings(model5_file, 'model5.png'))
+#+end_src
+
+#+RESULTS[e13b250030dee659265725ee22c85880abd427c5]:
+#+begin_results
+[[file:model5.png]]
+#+end_results
+
+** Window=30
+#+begin_src python :python "python3" :results output file :wrap
+print(plot_embeddings(model30_file, 'model30.png'))
+#+end_src
+
+#+RESULTS[65174dd614c2e19b1a67e9f0323305b8df9a2f6f]:
+#+begin_results
+[[file:model30.png]]
+#+end_results
+
+* Precision@5 for "Tea"
+** Code
+#+begin_src python :python "python3" :results output
+def precision_at_k(pos, neg, model, k, expectations):
+    results = list(map(lambda x: x[0],
+                       model.wv.most_similar(
+                           positive=pos,
+                           negative=neg,
+                           topn=k)))
+    correctly_found = len(set(expectations).intersection(set(results)))
+    precision = correctly_found / len(results)
+    recall = correctly_found / len(expectations)
+    print("""
+Search for sum({}) - sum({}):
+--------------------------------------------------
+Expectations: {}
+Results: {}
+Correctly Found: {}
+Precision: {}
+Recall: {}
+    """.format(pos, neg, expectations, results, correctly_found, precision, recall))
+#+end_src
+
+#+RESULTS[aca9214b1aecfcb35d30fdc90b4061ed2550611c]:
+#+begin_example
+#+end_example
+
+
+** Data
+#+begin_src python :python "python3"
+pos = ['dormouse']
+neg = None
+k = 20
+expectations = ['hatter', 'hare', 'alice', 'hare', 'dormouse', 'party', 'queen']
+#+end_src
+
+#+RESULTS[e81dbf4b2b9f7bb16ba5daf155de174d9ff1f404]:
+#+begin_example
+#+end_example
+
+** Window=5
+#+begin_src python :python "python3"
+precision_at_k(pos, neg, model5, k, expectations)
+#+end_src
+
+#+RESULTS[cf17771f6f5f23c14088d3f9aaec573c9f16cf86]:
+#+begin_example
+Search for sum(['dormouse']) - sum(None):
+--------------------------------------------------
+Expectations: ['hatter', 'hare', 'alice', 'hare', 'dormouse', 'party', 'queen']
+Results: ['alice', 'could', 'quite', 'little', 'great', 'said', 'back', 'two', 'like', 'went', 'first', 'queen', 'began', 'one', 'might', 'turtle', 'duchess', 'time', 'would', 'came']
+Correctly Found: 2
+Precision: 0.1
+Recall: 0.2857142857142857
+#+end_example
+
+--------------------------------------------------
+Expectations: ['hatter', 'hare', 'alice', 'hare', 'dormouse', 'party', 'queen']
+Results: ['said', 'little', 'one', 'alice', 'could', 'came', 'would', 'much', 'go', 'know', 'march', 'time', 'head', 'see', 'began', 'come', 'make', 'back', 'thing', 'queen']
+Correctly Found: 2
+Precision: 0.1
+Recall: 0.2857142857142857
+#+end_src
+
+** Window=30
+#+begin_src python :python "python3"
+precision_at_k(pos, neg, model30, k, expectations)
+#+end_src
+
+#+RESULTS[fac6409531b76d5f0fef9c5bd55fc668c74ff307]:
+#+begin_example
+Search for sum(['dormouse']) - sum(None):
+--------------------------------------------------
+Expectations: ['hatter', 'hare', 'alice', 'hare', 'dormouse', 'party', 'queen']
+Results: ['back', 'alice', 'could', 'queen', 'quite', 'went', 'little', 'great', 'head', 'first', 'one', 'like', 'would', 'might', 'looked', 'came', 'said', 'two', 'time', 'began']
+Correctly Found: 2
+Precision: 0.1
+Recall: 0.2857142857142857
+#+end_example
+
+--------------------------------------------------
+Expectations: ['hatter', 'hare', 'alice', 'hare', 'dormouse', 'party', 'queen']
+Results: ['little', 'much', 'came', 'could', 'said', 'alice', 'one', 'head', 'back', 'round', 'time', 'thing', 'would', 'see', 'first', 'began', 'way', 'make', 'large', 'found']
+Correctly Found: 1
+Precision: 0.05
+Recall: 0.14285714285714285
+#+end_src
+* Sent2Vec
+#+begin_src python :python "python3" :results output
+from gensim.models import KeyedVectors
+from math import log
+import numpy as np
+
+class SentVec:
+    def __init__(self, sents, word_vec, tokenizer):
+        self.idf_index = self.__build_idf_index(sents)
+        self.sent_vec = self.__sent_vectors(sents, word_vec)
+        self.word_vec = word_vec
+        self.tokenizer = tokenizer
+
+    def query(self, query, k=10):
+        query_vec = np.average(
+            [self.word_vec.get_vector(word) * self.idf_index.get(word, 0)
+             for word in filter_words(self.tokenizer.tokenize(query))], 0)
+        return self.sent_vec.similar_by_vector(query_vec, topn=k)
+
+    def __build_idf_index(self, sents):
+        total = len(sents)
+        index = {}
+        for sent in sents:
+            for word in set(sent):
+                index[word] = 1 + index.get(word, 0)
+        for k in index:
+            index[k] = log(total/index[k])
+        return index
+
+    def __sent_vectors(self, sents, word_vec):
+        sent_vec = KeyedVectors(word_vec.vector_size)
+        idf_index = self.idf_index
+
+        for sent in sents:
+            sent_vec.add(
+                ' '.join(sent),
+                np.average([word_vec.get_vector(word) * idf_index[word]
+                            for word in sent], 0))
+        return sent_vec
+
+sent_model = SentVec(filtered_sents, model5.wv, tokenizer)
+#+end_src
+
+#+RESULTS[0596484d9f3849992e998746810c7c7a70d71e37]:
+#+begin_example
+#+end_example
+** Search for "Dormouse is asleep"
+#+begin_src python :python "python3" :results output
+from pprint import pprint
+pprint(sent_model.query("dormouse is asleep", 5))
+#+end_src
+
+#+RESULTS[260f54e68deab1d2b7778df4f4c7adcd90b62d45]:
+#+begin_example
+[('uncomfortable dormouse thought alice asleep suppose mind', 0.9358623623847961),
+ ('dormouse asleep said hatter poured little hot tea upon nose', 0.9343298673629761),
+ ('treacle said dormouse without considering time', 0.9339587092399597),
+ ('course said dormouse well', 0.9313790798187256),
+ ('well rate dormouse said hatter went looking anxiously round see would deny dormouse denied nothing fast asleep', 0.9292046427726746)]
+#+end_example
+** Search for "Mad hatter at the tea party"
+#+begin_src python :python "python3" :results output
+pprint(sent_model.query("mad hatter at the tea party", 5))
+#+end_src
+
+#+RESULTS[1a4fe13e652cc8679ba25117a5385944a54d272b]:
+#+begin_example
+[('mad tea party', 0.9865559339523315),
+ ('tea hatter replied', 0.9710916876792908),
+ ('poor man majesty hatter began trembling voice begun tea week bread butter '
+  'getting thin twinkling tea',
+  0.9669445157051086),
+ ('said hatter', 0.9660705327987671),
+ ('alice looked round table nothing tea', 0.9657896757125854)]
+#+end_example
